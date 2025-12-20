@@ -1,74 +1,83 @@
-import streamlit as st
-import traceback
-import time
 
-st.set_page_config(page_title="System Check", layout="wide")
+# --- PAGE CONFIG ---  
+st.set_page_config(page_title="Sniper AI (Safe Mode)", layout="wide", page_icon="🛡️")  
 
-st.title("🛠️ Repair Mode: System Check")
+# --- PASSWORD CHECK ---  
+if "authenticated" not in st.session_state:  
+    st.session_state.authenticated = False  
 
-# 1. Library Check
-st.write("Checking Libraries...")
-try:
-    import yfinance as yf
-    import pandas as pd
-    import numpy as np
-    import google.generativeai as genai
-    st.success("✅ All Libraries Installed Successfully!")
-except Exception as e:
-    st.error(f"❌ Library Error: {e}")
-    st.stop()
+# Agar secrets mein password hai toh check karo  
+if "APP_PASSWORD" in st.secrets:  
+    if not st.session_state.authenticated:  
+        st.title("🔒 LOCKED")  
+        pwd = st.text_input("Password:", type="password")  
+        if st.button("Login"):  
+            if pwd == st.secrets["APP_PASSWORD"]:  
+                st.session_state.authenticated = True  
+                st.rerun()  
+            else:  
+                st.error("Wrong Password")  
+        st.stop()  
 
-# 2. Data Connection Check
-st.write("Testing Market Data Connection...")
-symbol = "^NSEI"
-try:
-    # Attempt download
-    data = yf.download(symbol, period="5d", interval="1d", progress=False)
-    
-    if data is None or data.empty:
-        st.warning("⚠️ Real Data Failed (Market/Network Block). Switching to Mock Data for UI Testing.")
-        # Create Mock Data just to show UI works
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=5)
-        data = pd.DataFrame({
-            'Close': [24000, 24100, 24050, 24200, 24150],
-            'High': [24100, 24200, 24100, 24300, 24200],
-            'Low': [23900, 24000, 24000, 24100, 24100]
-        }, index=dates)
-        is_mock = True
-    else:
-        st.success("✅ Real Nifty Data Received!")
-        is_mock = False
+# --- SIDEBAR ---  
+with st.sidebar:  
+    st.title("🎯 Controls")  
+    if "GEMINI_API_KEY" in st.secrets:  
+        api_key = st.secrets["GEMINI_API_KEY"]  
+        st.success("Connected ✅")  
+    else:  
+        api_key = st.text_input("API Key", type="password")  
+      
+    if st.button("Refresh Data"):  
+        st.rerun()  
 
-    # Fix Columns if needed
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.droplevel(1)
+# --- MAIN LOGIC ---  
+st.title("🎯 Sniper Trade AI")  
 
-    latest = data.iloc[-1]
-    price = latest['Close']
-    
-    st.metric("Nifty Check", f"{price:.2f}", "Mock Data" if is_mock else "Live Data")
-    
-    st.write("### Data Preview:")
-    st.dataframe(data.tail())
+# Data Fetching  
+symbol = "^NSEI"  
+try:  
+    data = yf.download(symbol, period="5d", interval="15m", progress=False)  
+      
+    if data is None or data.empty:  
+        st.error("⚠️ Market Data nahi mil raha. (Market Closed or API Issue)")  
+    else:  
+        # Multi-index fix  
+        if isinstance(data.columns, pd.MultiIndex):  
+            data.columns = data.columns.droplevel(1)  
 
-except Exception as e:
-    st.error(f"❌ Data Error: {e}")
-    st.code(traceback.format_exc())
+        # Indicators  
+        data['RSI'] = ta.rsi(data['Close'], length=14)  
+        data['EMA'] = ta.ema(data['Close'], length=200)  
+          
+        # Supertrend (Try/Except taaki crash na ho)  
+        try:  
+            st_data = ta.supertrend(data['High'], data['Low'], data['Close'], length=10, multiplier=3)  
+            data['ST'] = st_data.iloc[:, 0] # First column usually direction/value  
+        except:  
+            data['ST'] = 0  
 
-# 3. AI Check
-st.divider()
-st.write("Checking AI Brain...")
-api_key = st.secrets.get("GEMINI_API_KEY")
+        # Latest Values  
+        latest = data.iloc[-1]  
+        price = float(latest['Close'])  
+        rsi = float(latest['RSI']) if not pd.isna(latest['RSI']) else 50  
+        ema = float(latest['EMA']) if not pd.isna(latest['EMA']) else price  
 
-if api_key:
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content("Say 'System is Operational'")
-        st.success(f"✅ AI Response: {response.text}")
-    except Exception as e:
-        st.error(f"❌ AI Error: {e}")
-else:
-    st.warning("⚠️ API Key Not Found in Secrets")
+        # Display  
+        c1, c2, c3 = st.columns(3)  
+        c1.metric("Nifty Price", f"{price:.2f}")  
+        c2.metric("RSI", f"{rsi:.2f}")  
+        c3.metric("EMA 200", f"{ema:.2f}")  
 
-st.info("Agar yeh screen dikh rahi hai, iska matlab App sahi hai, bas connection check ho raha hai.")
+        # AI Logic  
+        if api_key:  
+            genai.configure(api_key=api_key)  
+            model = genai.GenerativeModel("gemini-1.5-flash")  
+            if st.button("🤖 Ask AI"):  
+                with st.spinner("Thinking..."):  
+                    res = model.generate_content(f"Analyze Nifty Price {price}, RSI {rsi}. Buy or Sell? Short answer.")  
+                    st.write(res.text)  
+
+except Exception as e:  
+    st.error(f"Data Error: {str(e)}")
+
