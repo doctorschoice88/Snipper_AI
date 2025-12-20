@@ -1,3 +1,14 @@
+import streamlit as st
+import traceback
+
+--- ERROR CATCHER (Taaki "Oh No" na aaye) ---
+
+try:
+import yfinance as yf
+import pandas_ta as ta
+import pandas as pd
+import google.generativeai as genai
+import numpy as np
 
 # --- PAGE CONFIG ---  
 st.set_page_config(page_title="Sniper AI (Safe Mode)", layout="wide", page_icon="🛡️")  
