@@ -1,6 +1,3 @@
 streamlit
 google-generativeai
 yfinance
-pandas_ta
-pandas
-numpy<2.0.0
