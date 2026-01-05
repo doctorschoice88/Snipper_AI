@@ -1,138 +1,139 @@
+
 import streamlit as st
 import yfinance as yf
-import pandas_ta as ta
 import pandas as pd
+import numpy as np
 import google.generativeai as genai
 
 # --- PAGE CONFIG ---
-st.set_page_config(
-    page_title="Sniper AI (Aggressive)",
-    page_icon="🔥",
-    layout="wide"
-)
+st.set_page_config(page_title="Sniper AI (Aggressive)", layout="wide", page_icon="🔥")
 
-# --- CUSTOM CSS ---
-st.markdown("""
-<style>
-    .stApp { background-color: #0b0e11; color: #e1e1e1; font-family: 'Roboto Mono', monospace; }
-    .buy-signal { background-color: rgba(0, 255, 0, 0.1); color: #00ff00; font-weight: bold; padding: 15px; border: 2px solid #00ff00; border-radius: 10px; text-align: center; }
-    .sell-signal { background-color: rgba(255, 0, 0, 0.1); color: #ff0000; font-weight: bold; padding: 15px; border: 2px solid #ff0000; border-radius: 10px; text-align: center; }
-    .wait-signal { background-color: rgba(255, 255, 0, 0.1); color: #ffff00; font-weight: bold; padding: 15px; border: 2px solid #ffff00; border-radius: 10px; text-align: center; }
-</style>
-""", unsafe_allow_html=True)
+# --- MANUAL INDICATORS (Bina Library Ke) ---
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).ewm(alpha=1/period, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/period, adjust=False).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
-# --- SIDEBAR ---
-with st.sidebar:
-    st.title("🔥 SCALPER CONTROLS")
-    if "GEMINI_API_KEY" in st.secrets:
-        api_key = st.secrets["GEMINI_API_KEY"]
-        st.success("Brain: Active")
-    else:
-        api_key = st.text_input("API Key", type="password")
+def calculate_supertrend(df, period=10, multiplier=3):
+    high = df['High']
+    low = df['Low']
+    close = df['Close']
     
-    st.divider()
-    # Scalping ke liye chota timeframe default kar diya
-    timeframe = st.selectbox("Timeframe", ["5m", "15m", "1h"], index=0) 
-    if st.button("🔄 REFRESH"):
-        st.rerun()
+    # ATR Calculation
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1/period, adjust=False).mean()
+    
+    # Bands
+    hl2 = (high + low) / 2
+    final_upperband = hl2 + (multiplier * atr)
+    final_lowerband = hl2 - (multiplier * atr)
+    
+    supertrend = [True] * len(df) # True = Green, False = Red
+    
+    for i in range(1, len(df)):
+        curr, prev = i, i-1
+        if final_upperband[curr] < final_upperband[prev] or close[prev] > final_upperband[prev]:
+            final_upperband[curr] = min(final_upperband[curr], final_upperband[prev])
+        else:
+            final_upperband[curr] = final_upperband[curr]
+            
+        if final_lowerband[curr] > final_lowerband[prev] or close[prev] < final_lowerband[prev]:
+            final_lowerband[curr] = max(final_lowerband[curr], final_lowerband[prev])
+        else:
+            final_lowerband[curr] = final_lowerband[curr]
+            
+        if supertrend[prev] == True and close[curr] < final_lowerband[prev]:
+            supertrend[curr] = False
+        elif supertrend[prev] == False and close[curr] > final_upperband[prev]:
+            supertrend[curr] = True
+        else:
+            supertrend[curr] = supertrend[prev]
+            
+    return supertrend
 
-# --- DATA ENGINE ---
-def get_scalper_data(interval):
-    try:
-        symbol = "^NSEI"
-        # Sirf 5 din ka data chahiye speed ke liye
-        data = yf.download(symbol, period="5d", interval=interval, progress=False)
+# --- MAIN LOGIC ---
+try:
+    # Sidebar
+    with st.sidebar:
+        st.header("🔥 Scalper Controls")
+        if "GEMINI_API_KEY" in st.secrets:
+            api_key = st.secrets["GEMINI_API_KEY"]
+            st.success("Brain: Active")
+        else:
+            api_key = st.text_input("API Key", type="password")
         
-        if data is None or data.empty:
-            return None, "Data Unavailable"
+        # 15m Default rakha hai
+        timeframe = st.selectbox("Timeframe", ["15m", "5m", "1h"])
+        if st.button("Refresh"):
+            st.rerun()
 
+    st.title("🔥 NIFTY AGGRESSIVE SNIPER")
+    
+    # Data Fetching
+    symbol = "^NSEI"
+    data = yf.download(symbol, period="5d", interval=timeframe, progress=False)
+
+    if data is None or data.empty:
+        st.error("⚠️ Market Data Not Found.")
+    else:
+        # Columns Fix
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.droplevel(1)
 
-        # --- INDICATORS ---
-        data['RSI'] = ta.rsi(data['Close'], length=14)
-        
-        # Supertrend (Standard 10, 3)
-        try:
-            st = ta.supertrend(data['High'], data['Low'], data['Close'], length=10, multiplier=3)
-            data['SUPERTREND_DIR'] = st.iloc[:, 1] # 1 = Green, -1 = Red
-        except:
-            data['SUPERTREND_DIR'] = 0
+        # Calculations
+        df = data.copy()
+        df['RSI'] = calculate_rsi(df['Close'])
+        st_trend = calculate_supertrend(df)
 
         # Latest Values
-        latest = data.iloc[-1]
-        close_price = float(latest['Close'])
-        rsi_val = float(latest['RSI']) if not pd.isna(latest['RSI']) else 50
-        st_dir = int(latest['SUPERTREND_DIR']) if not pd.isna(latest['SUPERTREND_DIR']) else 0
+        latest = df.iloc[-1]
+        price = float(latest['Close'])
+        rsi = float(latest['RSI'])
+        is_bullish = st_trend[-1] # True = UP, False = DOWN
 
-        # --- AGGRESSIVE LOGIC (No EMA Filter) ---
+        # --- AGGRESSIVE LOGIC (Put Side Open) ---
         signal = "WAIT"
-        reason = "Choppy Market"
+        color = "orange"
+        reason = "Choppy"
+
+        # BUY CALL
+        if is_bullish and rsi > 55:
+            signal = "BUY CALL 🚀"
+            color = "green"
+            reason = "Trend UP + Momentum Strong"
         
-        # BUY CALL Logic
-        if st_dir == 1 and rsi_val > 55:
-            signal = "BUY CALL (CE) 🚀"
-            reason = "Supertrend GREEN + RSI Strong (>55)"
-            
-        # BUY PUT Logic (Ab yeh chalega!)
-        # Pehle yahan 'Price < 200 EMA' ki shart thi, wo hata di maine.
-        elif st_dir == -1 and rsi_val < 45:
-            signal = "BUY PUT (PE) 🔻"
-            reason = "Supertrend RED + RSI Weak (<45)"
-            
-        return {
-            "price": close_price,
-            "rsi": rsi_val,
-            "supertrend": "🟢 UP" if st_dir == 1 else "🔴 DOWN",
-            "signal": signal,
-            "reason": reason,
-            "interval": interval
-        }, None
+        # BUY PUT (Aggressive - No EMA Filter)
+        elif not is_bullish and rsi < 45:
+            signal = "BUY PUT 🔻"
+            color = "red"
+            reason = "Trend DOWN + Momentum Weak"
 
-    except Exception as e:
-        return None, str(e)
+        # UI Display
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Nifty", f"{price:.2f}")
+        c2.metric("RSI", f"{rsi:.2f}")
+        c3.metric("Trend", "UP 🟢" if is_bullish else "DOWN 🔴")
 
-# --- UI LAYOUT ---
-st.title("🔥 NIFTY SCALPER AI")
-st.caption("Aggressive Mode: Put Side Unlocked")
+        st.markdown(f"""
+            <div style="background-color:{color}; padding:15px; border-radius:10px; text-align:center;">
+                <h1 style="color:white; margin:0;">{signal}</h1>
+                <p style="color:white;">{reason}</p>
+            </div>
+        """, unsafe_allow_html=True)
 
-data, error = get_scalper_data(timeframe)
+        # AI Check
+        if api_key:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            if st.button("🤖 Quick Check"):
+                prompt = f"Nifty {price}, RSI {rsi}, Trend {'UP' if is_bullish else 'DOWN'}. Signal: {signal}. Should I scalp? Short answer."
+                res = model.generate_content(prompt)
+                st.info(res.text)
 
-if data:
-    c1, c2, c3 = st.columns(3)
-    c1.metric("NIFTY Spot", f"{data['price']:.2f}")
-    c2.metric("Trend", data['supertrend'])
-    c3.metric("RSI", f"{data['rsi']:.2f}")
-
-    st.divider()
-    
-    # Signal Box
-    if "BUY CALL" in data['signal']:
-        st.markdown(f'<div class="buy-signal">{data["signal"]}</div>', unsafe_allow_html=True)
-    elif "BUY PUT" in data['signal']:
-        st.markdown(f'<div class="sell-signal">{data["signal"]}</div>', unsafe_allow_html=True)
-    else:
-        st.markdown(f'<div class="wait-signal">✋ {data["signal"]}</div>', unsafe_allow_html=True)
-        
-    st.info(f"**LOGIC:** {data['reason']}")
-
-    # Gemini Analysis
-    if api_key:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        
-        if st.button("🤖 Quick Analysis"):
-            prompt = (
-                f"Nifty {data['interval']} Chart: Price {data['price']}, RSI {data['rsi']}, Trend {data['supertrend']}. "
-                f"Signal is {data['signal']}. "
-                "Give me a quick SCALPING view. Should I short? Keep it very short."
-            )
-            with st.spinner("Checking..."):
-                try:
-                    res = model.generate_content(prompt)
-                    st.write(res.text)
-                except:
-                    st.error("AI Busy")
-
-else:
-    st.error(f"Error: {error}")
+except Exception as e:
+    st.error(f"Error: {str(e)}")
