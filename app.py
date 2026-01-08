@@ -1,4 +1,28 @@
+# --- PASSWORD LOCK SYSTEM (Paste this at the TOP of app.py) ---
 
+# Check authentication state
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+# Sirf tabhi lock lagao agar Secrets mein password set hai
+if "APP_PASSWORD" in st.secrets:
+    if not st.session_state.authenticated:
+        # Lock Screen UI
+        st.markdown("<h1 style='text-align: center;'>🔒 SNIPER ACCESS DENIED</h1>", unsafe_allow_html=True)
+        st.write("---")
+        
+        # Password Input
+        password = st.text_input("Enter Secret Password:", type="password")
+        
+        if st.button("UNLOCK SYSTEM"):
+            if password == st.secrets["APP_PASSWORD"]:
+                st.session_state.authenticated = True
+                st.rerun() # Page refresh karke andar le jao
+            else:
+                st.error("❌ GALAT PASSWORD! TRY AGAIN.")
+        
+        # Yahin rok do, aage ka code run nahi hone dena
+        st.stop()
 import streamlit as st
 import yfinance as yf
 import pandas as pd
