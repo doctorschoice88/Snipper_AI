@@ -1,6 +1,12 @@
-# --- PASSWORD LOCK SYSTEM (Paste this at the TOP of app.py) ---
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import google.generativeai as genai
 
-# Check authentication state
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Sniper AI (Locked)", layout="wide", page_icon="🔐")
+
+# --- 🔒 PASSWORD LOCK SYSTEM ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -23,16 +29,10 @@ if "APP_PASSWORD" in st.secrets:
         
         # Yahin rok do, aage ka code run nahi hone dena
         st.stop()
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import numpy as np
-import google.generativeai as genai
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Sniper AI (Aggressive)", layout="wide", page_icon="🔥")
+# --- MAIN APP LOGIC STARTS HERE ---
 
-# --- MANUAL INDICATORS (Bina Library Ke) ---
+# --- MANUAL INDICATOR FUNCTIONS ---
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).ewm(alpha=1/period, adjust=False).mean()
@@ -80,7 +80,7 @@ def calculate_supertrend(df, period=10, multiplier=3):
             
     return supertrend
 
-# --- MAIN LOGIC ---
+# --- MAIN UI ---
 try:
     # Sidebar
     with st.sidebar:
@@ -91,7 +91,6 @@ try:
         else:
             api_key = st.text_input("API Key", type="password")
         
-        # 15m Default rakha hai
         timeframe = st.selectbox("Timeframe", ["15m", "5m", "1h"])
         if st.button("Refresh"):
             st.rerun()
@@ -103,7 +102,7 @@ try:
     data = yf.download(symbol, period="5d", interval=timeframe, progress=False)
 
     if data is None or data.empty:
-        st.error("⚠️ Market Data Not Found.")
+        st.error("⚠️ Market Data Not Found (Market Closed?).")
     else:
         # Columns Fix
         if isinstance(data.columns, pd.MultiIndex):
@@ -120,7 +119,7 @@ try:
         rsi = float(latest['RSI'])
         is_bullish = st_trend[-1] # True = UP, False = DOWN
 
-        # --- AGGRESSIVE LOGIC (Put Side Open) ---
+        # --- AGGRESSIVE LOGIC ---
         signal = "WAIT"
         color = "orange"
         reason = "Choppy"
@@ -131,7 +130,7 @@ try:
             color = "green"
             reason = "Trend UP + Momentum Strong"
         
-        # BUY PUT (Aggressive - No EMA Filter)
+        # BUY PUT
         elif not is_bullish and rsi < 45:
             signal = "BUY PUT 🔻"
             color = "red"
